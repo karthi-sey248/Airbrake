@@ -38,7 +38,7 @@ async function getProjectTables(pool: Pool): Promise<string[]> {
  */
 function buildErrorUnion(tables: string[], extraWhere = ''): string {
   const parts = tables.map(
-    (t) => `SELECT project_name, file_name, error, timestamp FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${extraWhere}`,
+    (t) => `SELECT project_name, file_name, error, timestamp, reopened_at FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${extraWhere}`,
   );
   return parts.join('\n UNION ALL\n');
 }
@@ -114,11 +114,15 @@ export function createProjectDashboardRouter(pool: Pool) {
       const tables = await getProjectTables(pool);
       if (tables.length === 0) return res.json({ date: new Date().toISOString().slice(0, 10), errors: [] });
 
-      const todayWhere = ` AND timestamp AT TIME ZONE 'UTC' >= CURRENT_DATE AND timestamp AT TIME ZONE 'UTC' < CURRENT_DATE + INTERVAL '1 day'`;
+      const todayWhere = ` AND (
+        (timestamp AT TIME ZONE 'UTC' >= CURRENT_DATE AND timestamp AT TIME ZONE 'UTC' < CURRENT_DATE + INTERVAL '1 day')
+        OR
+        (reopened_at IS NOT NULL AND reopened_at AT TIME ZONE 'UTC' >= CURRENT_DATE AND reopened_at AT TIME ZONE 'UTC' < CURRENT_DATE + INTERVAL '1 day')
+      )`;
       const union = buildErrorUnion(tables, todayWhere);
 
       const { rows } = await pool.query(`
-        SELECT project_name AS project, file_name, error, timestamp
+        SELECT project_name AS project, file_name, error, COALESCE(reopened_at, timestamp) AS timestamp
         FROM (${union}) AS combined
         ORDER BY timestamp DESC
       `);
@@ -188,7 +192,7 @@ export function createProjectDashboardRouter(pool: Pool) {
 
       // UNION ALL across all tables — only active (non-resolved) errors
       const unionParts = tables.map(
-        (t) => `SELECT project_name, error, error_hash, timestamp, error_status FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${dateWhere}`,
+        (t) => `SELECT project_name, error, error_hash, timestamp, error_status, reopened_at FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${dateWhere}`,
       );
       const union = unionParts.join('\nUNION ALL\n');
 
@@ -200,7 +204,7 @@ export function createProjectDashboardRouter(pool: Pool) {
           COALESCE(error_hash, MD5(project_name || LOWER(TRIM(error)))) AS error_hash,
           COUNT(*)::int                                AS occurrence_count,
           MIN(timestamp)                               AS first_seen,
-          MAX(timestamp)                               AS last_seen,
+          COALESCE(MAX(reopened_at), MAX(timestamp))   AS last_seen,
           CASE
             WHEN BOOL_OR(error_status = 'reopened') THEN 'regression'
             WHEN COUNT(*) = 1 THEN 'new'

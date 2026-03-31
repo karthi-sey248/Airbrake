@@ -210,7 +210,7 @@ export function BreaksList() {
                       {fmt(b.first_seen)}
                     </td>
                     <td style={{ padding: '11px 16px', color: 'var(--text-muted)', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
-                      {fmt(b.last_seen)}
+                      {b.status === 'new' ? <span style={{ color: '#475569' }}>—</span> : fmt(b.last_seen)}
                     </td>
                     <td style={{ padding: '11px 16px' }}>
                       <StatusBadge status={b.status} />
