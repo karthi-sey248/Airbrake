@@ -198,7 +198,7 @@ export function createProjectDashboardRouter(pool: Pool) {
 
       // UNION ALL across all tables — only active (non-resolved) errors
       const unionParts = tables.map(
-        (t) => `SELECT project_name, error, error_hash, timestamp, error_status, reopened_at FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${dateWhere}`,
+        (t) => `SELECT project_name, error, error_detail, error_hash, timestamp, error_status, reopened_at FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${dateWhere}`,
       );
       const union = unionParts.join('\nUNION ALL\n');
 
@@ -207,7 +207,7 @@ export function createProjectDashboardRouter(pool: Pool) {
         SELECT
           project_name,
           error                                        AS error_message,
-          COALESCE(error_hash, MD5(project_name || LOWER(TRIM(error)))) AS error_hash,
+          COALESCE(error_hash, MD5(COALESCE(LOWER(TRIM(error_detail)), project_name || LOWER(TRIM(error))))) AS error_hash,
           COUNT(*)::int                                AS occurrence_count,
           MIN(timestamp)                               AS first_seen,
           COALESCE(MAX(reopened_at), MAX(timestamp))   AS last_seen,
@@ -217,7 +217,7 @@ export function createProjectDashboardRouter(pool: Pool) {
             ELSE 'existing'
           END AS status
         FROM (${union}) AS all_errors
-        GROUP BY project_name, error, COALESCE(error_hash, MD5(project_name || LOWER(TRIM(error))))
+        GROUP BY project_name, error, COALESCE(error_hash, MD5(COALESCE(LOWER(TRIM(error_detail)), project_name || LOWER(TRIM(error)))))
       `;
 
       // Apply optional status filter
@@ -283,10 +283,20 @@ export function createProjectErrorUpsertRouter(pool: Pool) {
         return res.status(400).json({ error: 'error field is required' });
       }
 
-      // Compute error_hash if not provided: MD5(project_name || lower(trim(error)))
+      // Derive short error from error_detail (last line before first colon), fallback to errorMsg
+      const errorDetail: string | undefined = (body.error_detail as string | undefined)?.trim() || undefined;
+      let shortError = errorMsg;
+      if (errorDetail) {
+        const lines = errorDetail.split('\n').map((l: string) => l.trim()).filter(Boolean);
+        const lastLine = lines[lines.length - 1] ?? errorMsg;
+        shortError = lastLine.split(':')[0].trim() || errorMsg;
+      }
+
+      // Compute error_hash from error_detail (preferred) falling back to error
+      const hashSource = errorDetail ?? shortError;
       const errorHash: string = typeof body.error_hash === 'string' && body.error_hash
         ? body.error_hash
-        : require('crypto').createHash('md5').update(projectName + errorMsg.toLowerCase().trim()).digest('hex');
+        : require('crypto').createHash('md5').update(hashSource).digest('hex');
 
       // Check for existing row with this error_hash
       const { rows: existing } = await pool.query(
