@@ -30,10 +30,12 @@ async function getProjectTables(pool: Pool): Promise<string[]> {
     FROM information_schema.columns c
     WHERE c.table_schema = 'public'
       AND c.column_name = 'project_name'
-      AND c.table_name NOT IN ('alert_rules', 'alert_history', 'users',
-                               'projects', 'saved_filters', 'retention_policies',
-                               'parse_errors', 'audit_log', 'break_groups', 'breaks')
-      AND c.table_name != 'Image_Forensics'
+      AND c.table_name NOT IN (
+        'alert_rules', 'alert_history', 'users', 'projects',
+        'saved_filters', 'retention_policies', 'parse_errors',
+        'audit_log', 'break_groups', 'breaks', 'error_solutions',
+        'Image_Forensics'
+      )
       AND c.table_name IN (
         SELECT table_name FROM information_schema.columns
         WHERE table_schema = 'public' AND column_name = 'error_status'

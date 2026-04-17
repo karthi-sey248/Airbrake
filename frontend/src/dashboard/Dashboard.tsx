@@ -8,6 +8,7 @@ interface ErrorRow {
   project: string;
   file_name: string | null;
   error: string;
+  error_hash?: string | null;
   error_detail?: string | null;
   timestamp: string | null;
 }
@@ -94,9 +95,42 @@ function ErrorDetailModal({ row, onClose }: { row: ErrorRow; onClose: () => void
   const [solutionText, setSolutionText] = useState('');
   const [savedSolution, setSavedSolution] = useState('');
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
+  const [saving, setSaving] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [resolved, setResolved] = useState(false);
 
-  function handleSave() {
-    setSavedSolution(solutionText);
+  // Fetch existing solution on open
+  React.useEffect(() => {
+    if (!row.error_hash) return;
+    fetch(`/api/error-solution/${encodeURIComponent(row.error_hash)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.solution) { setSavedSolution(d.solution); setSolutionText(d.solution); }
+      })
+      .catch(() => {});
+  }, [row.error_hash]);
+
+  async function handleSave() {
+    if (!row.error_hash) return;
+    setSaving(true);
+    try {
+      await fetch('/api/error-solution', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error_hash: row.error_hash, solution: solutionText }),
+      });
+      setSavedSolution(solutionText);
+      setMode('view');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!row.error_hash) return;
+    await fetch(`/api/error-solution/${encodeURIComponent(row.error_hash)}`, { method: 'DELETE' });
+    setSavedSolution('');
+    setSolutionText('');
     setMode('view');
   }
 
@@ -105,9 +139,20 @@ function ErrorDetailModal({ row, onClose }: { row: ErrorRow; onClose: () => void
     setMode('view');
   }
 
-  function handleCreate() {
-    setSolutionText(savedSolution);
-    setMode('create');
+  async function handleResolve() {
+    if (!row.error_hash || !row.project) return;
+    if (!window.confirm(`Mark "${row.error}" in ${row.project} as resolved? It will disappear from the dashboard.`)) return;
+    setResolving(true);
+    try {
+      await fetch('/api/error-solution/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error_hash: row.error_hash, project_name: row.project }),
+      });
+      setResolved(true);
+    } finally {
+      setResolving(false);
+    }
   }
 
   return (
@@ -154,6 +199,17 @@ function ErrorDetailModal({ row, onClose }: { row: ErrorRow; onClose: () => void
         {/* Body */}
         <div style={{ overflow: 'auto', padding: '22px 26px', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
+          {/* Resolved banner */}
+          {resolved && (
+            <div style={{
+              padding: '12px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)',
+              color: '#34d399', display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              ✅ Error marked as resolved. It will disappear from the dashboard on next refresh.
+            </div>
+          )}
+
           {/* Error Detail section */}
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
@@ -187,7 +243,7 @@ function ErrorDetailModal({ row, onClose }: { row: ErrorRow; onClose: () => void
               </div>
               {mode === 'view' && !savedSolution && (
                 <button
-                  onClick={handleCreate}
+                  onClick={() => { setSolutionText(''); setMode('create'); }}
                   style={{
                     padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                     cursor: 'pointer', background: 'rgba(99,102,241,0.15)',
@@ -217,7 +273,7 @@ function ErrorDetailModal({ row, onClose }: { row: ErrorRow; onClose: () => void
                       cursor: 'pointer', background: 'rgba(99,102,241,0.15)',
                       color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)',
                     }}>✏️ Edit</button>
-                    <button onClick={() => { setSavedSolution(''); setSolutionText(''); }} style={{
+                    <button onClick={handleDelete} style={{
                       padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                       cursor: 'pointer', background: 'rgba(239,68,68,0.1)',
                       color: '#f87171', border: '1px solid rgba(239,68,68,0.25)',
@@ -257,14 +313,37 @@ function ErrorDetailModal({ row, onClose }: { row: ErrorRow; onClose: () => void
                     cursor: 'pointer', background: 'transparent',
                     color: 'var(--text-muted)', border: '1px solid var(--card-border)',
                   }}>Cancel</button>
-                  <button onClick={handleSave} style={{
+                  <button onClick={handleSave} disabled={saving} style={{
                     padding: '7px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600,
-                    cursor: 'pointer', background: '#6366f1', color: '#fff', border: 'none',
-                  }}>Save Solution</button>
+                    cursor: saving ? 'not-allowed' : 'pointer',
+                    background: '#6366f1', color: '#fff', border: 'none',
+                    opacity: saving ? 0.7 : 1,
+                  }}>{saving ? 'Saving…' : 'Save Solution'}</button>
                 </div>
               </div>
             )}
           </div>
+        </div>
+
+        {/* Footer — Mark as Resolved */}
+        <div style={{ padding: '14px 26px', borderTop: '1px solid var(--card-border)', display: 'flex', justifyContent: 'flex-end' }}>
+          {resolved ? (
+            <span style={{ fontSize: 13, color: '#34d399', fontWeight: 600 }}>✅ Resolved</span>
+          ) : (
+            <button
+              onClick={handleResolve}
+              disabled={resolving}
+              style={{
+                padding: '8px 20px', borderRadius: 7, fontSize: 13, fontWeight: 600,
+                cursor: resolving ? 'not-allowed' : 'pointer',
+                background: resolving ? 'rgba(16,185,129,0.1)' : 'rgba(16,185,129,0.15)',
+                color: '#34d399', border: '1px solid rgba(16,185,129,0.3)',
+                opacity: resolving ? 0.7 : 1,
+              }}
+            >
+              {resolving ? 'Resolving…' : '✓ Mark as Resolved'}
+            </button>
+          )}
         </div>
       </div>
     </div>

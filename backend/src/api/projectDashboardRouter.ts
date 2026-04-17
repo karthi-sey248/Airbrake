@@ -26,12 +26,19 @@ async function getProjectTables(pool: Pool): Promise<string[]> {
     FROM information_schema.columns c
     WHERE c.table_schema = 'public'
       AND c.column_name = 'project_name'
-      AND c.table_name != 'Image_Forensics'
+      AND c.table_name NOT IN (
+        'alert_rules', 'alert_history', 'users', 'projects',
+        'saved_filters', 'retention_policies', 'parse_errors',
+        'audit_log', 'break_groups', 'breaks', 'error_solutions',
+        'Image_Forensics'
+      )
       AND c.table_name IN (
-        SELECT table_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND column_name = 'error_status'
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'error_status'
+      )
+      AND c.table_name IN (
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'error_hash'
       )
     ORDER BY c.table_name
   `);
@@ -44,7 +51,7 @@ async function getProjectTables(pool: Pool): Promise<string[]> {
  */
 function buildErrorUnion(tables: string[], extraWhere = ''): string {
   const parts = tables.map(
-    (t) => `SELECT project_name, file_name, error, error_detail, timestamp, reopened_at FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${extraWhere}`,
+    (t) => `SELECT project_name, file_name, error, error_detail, error_hash, timestamp, reopened_at FROM "${t}" WHERE error IS NOT NULL AND error <> '' AND error_status IN ('open', 'reopened')${extraWhere}`,
   );
   return parts.join('\n UNION ALL\n');
 }
@@ -83,8 +90,8 @@ export function createProjectDashboardRouter(pool: Pool) {
       `);
       res.json({ projects: rows });
     } catch (err) {
-      console.error('[Dashboard] top-projects error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('[Dashboard] top-projects error:', (err as any).message ?? err);
+      res.status(500).json({ error: 'Internal server error', detail: (err as any).message });
     }
   });
 
@@ -109,8 +116,8 @@ export function createProjectDashboardRouter(pool: Pool) {
       `);
       res.json({ projects: rows });
     } catch (err) {
-      console.error('[Dashboard] top-error-projects error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('[Dashboard] top-error-projects error:', (err as any).message ?? err);
+      res.status(500).json({ error: 'Internal server error', detail: (err as any).message });
     }
   });
 
@@ -128,7 +135,7 @@ export function createProjectDashboardRouter(pool: Pool) {
       const union = buildErrorUnion(tables, todayWhere);
 
       const { rows } = await pool.query(`
-        SELECT project_name AS project, file_name, error, error_detail, COALESCE(reopened_at, timestamp) AS timestamp
+        SELECT project_name AS project, file_name, error, error_detail, error_hash, COALESCE(reopened_at, timestamp) AS timestamp
         FROM (${union}) AS combined
         ORDER BY timestamp DESC
       `);
@@ -136,8 +143,8 @@ export function createProjectDashboardRouter(pool: Pool) {
       const date = new Date().toISOString().slice(0, 10);
       res.json({ date, errors: rows });
     } catch (err) {
-      console.error('[Dashboard] today-errors error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('[Dashboard] today-errors error:', (err as any).message ?? err);
+      res.status(500).json({ error: 'Internal server error', detail: (err as any).message });
     }
   });
 
@@ -164,7 +171,7 @@ export function createProjectDashboardRouter(pool: Pool) {
       const union = buildErrorUnion(tables, extraWhere);
 
       const { rows } = await pool.query(`
-        SELECT project_name AS project, file_name, error, error_detail, timestamp
+        SELECT project_name AS project, file_name, error, error_detail, error_hash, timestamp
         FROM (${union}) AS combined
         ORDER BY timestamp DESC
         LIMIT 2000
@@ -172,8 +179,8 @@ export function createProjectDashboardRouter(pool: Pool) {
 
       res.json({ errors: rows });
     } catch (err) {
-      console.error('[Dashboard] errors error:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('[Dashboard] errors error:', (err as any).message ?? err);
+      res.status(500).json({ error: 'Internal server error', detail: (err as any).message });
     }
   });
 

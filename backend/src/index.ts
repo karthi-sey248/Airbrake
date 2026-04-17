@@ -141,6 +141,7 @@ app.get('/api/health', (_req: unknown, res: any) => res.json({ status: 'ok' }));
 import { createIngestRouter } from './api/ingestRouter';
 import { createProjectDashboardRouter, createProjectErrorUpsertRouter } from './api/projectDashboardRouter';
 import { createAlertManagementRouter } from './api/alertManagementRouter';
+import { createErrorSolutionRouter } from './api/errorSolutionRouter';
 import { startAlertEngine } from './alerts/alertChecker';
 import { createLogsRouterSync } from './api/logsRouter';
 import { createBreaksRouterSync } from './api/breaksRouter';
@@ -458,6 +459,9 @@ app.use('/api/projects', createProjectErrorUpsertRouter(pool));
 // Alert management — alert_rules + alert_history tables
 const alertMgmtRouter = createAlertManagementRouter(pool);
 app.use('/api', alertMgmtRouter);
+
+// Error solutions — error_solutions table only
+app.use('/api/error-solution', createErrorSolutionRouter(pool));
 
 // GET /api/projects?category=... — list projects from DB
 app.get('/api/projects', async (req: any, res: any) => {
