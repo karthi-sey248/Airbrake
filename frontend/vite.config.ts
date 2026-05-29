@@ -9,6 +9,9 @@ export default defineConfig({
       '@portal/shared': path.resolve(__dirname, '../shared/src/index.ts'),
     },
   },
+  build: {
+    emptyOutDir: false, // Don't clean dist before build — avoids Windows file lock issues
+  },
   server: {
     port: 3000,
     host: '0.0.0.0',

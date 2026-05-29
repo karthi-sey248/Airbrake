@@ -555,6 +555,25 @@ app.use('/api/alerts', createAlertsRouterSync(alertRuleRepository, sessionStore,
 app.use('/api/filters', createFiltersRouterSync(savedFilterRepository, sessionStore, auditLogRepo, rbac));
 app.use('/api/admin', createAdminRouterSync(userRepository, retentionPolicyRepository, sessionStore, auditLogRepo, rbac));
 
+// ─── Serve frontend build ─────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const path = require('path');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const fs = require('fs');
+
+const distPath = path.resolve(__dirname, '../../frontend/dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // SPA fallback — serve index.html for any non-API route
+  app.get('*', (_req: any, res: any) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+  console.log(`[Server] serving frontend build from ${distPath}`);
+} else {
+  console.log('[Server] no frontend dist found — skipping static file serving');
+}
+
 // ─── HTTP server + WebSocket ──────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
