@@ -1,62 +1,49 @@
 /**
  * Aurora DSQL database pool.
  *
- * Uses the official AWS Aurora DSQL connector for node-postgres which
- * automatically generates and refreshes IAM auth tokens on every connection.
- * No static password or manual token rotation needed.
+ * Uses the official @aws/aurora-dsql-node-postgres-connector which:
+ *  - Automatically generates IAM auth tokens on every connection
+ *  - Auto-refreshes tokens before they expire (15-min lifetime)
+ *  - Enforces SSL (required by Aurora DSQL, cannot be disabled)
+ *  - Works with Lambda execution role — no static credentials needed
  *
- * Required Lambda environment variables:
- *   DSQL_ENDPOINT   — e.g. abc123.dsql.us-east-1.on.aws
- *   DSQL_REGION     — e.g. us-east-1   (optional — auto-detected from endpoint)
- *
- * For local development, set DATABASE_URL instead and the code falls back
- * to a plain pg Pool (no IAM auth, no SSL).
+ * Required environment variables (set in Lambda → Configuration → Environment variables):
+ *   DSQL_ENDPOINT  — e.g. ezt2bkam5s4kjre73r25easkcu.dsql.us-east-1.on.aws
+ *   DSQL_REGION    — e.g. us-east-1
  */
 
 import { Pool } from 'pg';
 import { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
 
-// ─── Determine environment ────────────────────────────────────────────────────
+const DSQL_ENDPOINT = process.env.DSQL_ENDPOINT ?? '';
+const DSQL_REGION   = process.env.DSQL_REGION   ?? 'us-east-1';
 
-const dsqlEndpoint = process.env.DSQL_ENDPOINT ?? '';
-const dsqlRegion   = process.env.DSQL_REGION   ?? 'us-east-1';
-const databaseUrl  = process.env.DATABASE_URL  ?? '';
-
-// Use Aurora DSQL connector when DSQL_ENDPOINT is set (Lambda/production).
-// Fall back to plain pg Pool for local development.
-const isAuroraDsql = dsqlEndpoint.length > 0;
-
-// ─── Pool factory ─────────────────────────────────────────────────────────────
-
-function createPool(): Pool {
-  if (isAuroraDsql) {
-    // ── Aurora DSQL (Lambda / Production) ───────────────────────────────────
-    // AuroraDSQLPool extends pg.Pool and auto-generates IAM tokens per connection.
-    // SSL is always required and enforced by the connector.
-    console.log(`[DB] Connecting to Aurora DSQL: ${dsqlEndpoint}`);
-    return new AuroraDSQLPool({
-      host:             dsqlEndpoint,
-      user:             'admin',   // admin = IAM admin token; any other = regular token
-      database:         'postgres',
-      port:             5432,
-      max:              5,         // small pool — Lambda concurrency limit
-      idleTimeoutMillis: 10_000,   // release idle connections quickly between invocations
-      connectionTimeoutMillis: 5_000, // fail fast on cold starts
-      region:           dsqlRegion,
-    }) as unknown as Pool;
-  }
-
-  // ── Local development (plain pg Pool) ─────────────────────────────────────
-  console.log('[DB] Connecting to local PostgreSQL');
-  return new Pool({
-    connectionString: databaseUrl,
-    max: 10,
-    ssl: false,
-  });
+if (!DSQL_ENDPOINT) {
+  console.error('[DB] DSQL_ENDPOINT environment variable is not set. Set it in Lambda → Configuration → Environment variables.');
 }
 
-export const pool = createPool();
+console.log(`[DB] Connecting to Aurora DSQL: ${DSQL_ENDPOINT}`);
+
+/**
+ * AuroraDSQLPool — extends pg.Pool with automatic IAM token generation.
+ * In Lambda, the execution role provides credentials automatically.
+ * No password, no DATABASE_URL, no manual token rotation needed.
+ */
+export const pool: Pool = new AuroraDSQLPool({
+  host:                    DSQL_ENDPOINT,
+  user:                    'admin',        // 'admin' triggers admin-level IAM token
+  database:                'postgres',     // Aurora DSQL has one built-in DB: postgres
+  port:                    5432,
+  region:                  DSQL_REGION,
+  max:                     5,              // small pool — Lambda concurrency is limited
+  idleTimeoutMillis:       10_000,         // release idle connections quickly between invocations
+  connectionTimeoutMillis: 5_000,          // fail fast on cold starts rather than hanging
+}) as unknown as Pool;
+
+pool.on('connect', () => {
+  console.log('[DB] Aurora DSQL connection established');
+});
 
 pool.on('error', (err) => {
-  console.error('[DB] Unexpected pool error:', err.message);
+  console.error('[DB] Aurora DSQL pool error:', err.message);
 });
