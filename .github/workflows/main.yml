@@ -48,44 +48,46 @@ jobs:
   # ==========================================
   # BACKEND DEPLOYMENT TO AWS LAMBDA
   # ==========================================
-  deploy-backend:
+   deploy-backend:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ./backend
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+ 
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
         with:
-          node-version: "20"
-
-      - name: Install Backend dependencies
-        run: npm ci
-
-      - name: Build Backend
-        run: npm run build
-        continue-on-error: true
-
+          python-version: "3.14"
+ 
       - name: Package Lambda
+        working-directory: ./backend-python
         run: |
-          zip -r lambda.zip . \
-            -x "*.git*" \
-            -x "node_modules/aws-sdk/*"
-
+          zip -r ../lambda.zip \
+            lambda_function.py \
+            app.py \
+            db.py \
+            teams.py \
+            alert_engine.py
+          echo "Zip size: $(du -sh ../lambda.zip | cut -f1)"
+ 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
+ 
       - name: Deploy to Lambda
         run: |
           aws lambda update-function-code \
             --function-name $LAMBDA_FUNCTION_NAME \
             --zip-file fileb://lambda.zip
+ 
+      - name: Wait for update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name $LAMBDA_FUNCTION_NAME
+ 
+      - name: Done
+        run: echo "✅ Backend deployed successfully!"
+ 
